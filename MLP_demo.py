@@ -3,35 +3,44 @@ from torch import nn
 from d2l import torch as d2l
 from IPython import display
 
+# 1. 检查 GPU 可用性并指定设备
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 batch_size = 256
 train_iter, test_iter = d2l.load_data_fashion_mnist(batch_size)
 
-num_inputs, num_outputs, num_hiddens = 784, 10, 3
+num_inputs, num_outputs, num_hiddens = 784, 10, 256
 
-W1 = nn.Parameter(torch.randn(
-    num_inputs, num_hiddens, requires_grad=True) * 0.01)
-b1 = nn.Parameter(torch.zeros(num_hiddens, requires_grad=True))
-W2 = nn.Parameter(torch.randn(
-    num_hiddens, num_outputs, requires_grad=True) * 0.01)
-b2 = nn.Parameter(torch.zeros(num_outputs, requires_grad=True))
+# 2. 将 net 定义为一个继承自 nn.Module 的类
+class MLP(nn.Module):
+    def __init__(self, num_inputs, num_hiddens, num_outputs):
+        super(MLP, self).__init__()
+        self.W1 = nn.Parameter(torch.randn(
+            num_inputs, num_hiddens, requires_grad=True) * 0.01)
+        self.b1 = nn.Parameter(torch.zeros(num_hiddens, requires_grad=True))
+        self.W2 = nn.Parameter(torch.randn(
+            num_hiddens, num_outputs, requires_grad=True) * 0.01)
+        self.b2 = nn.Parameter(torch.zeros(num_outputs, requires_grad=True))
 
-params = [W1, b1, W2, b2]
+    def forward(self, X):
+        X = X.reshape((-1, num_inputs))
+        H = self.relu(X @ self.W1 + self.b1)  # 这里“@”代表矩阵乘法
+        return H @ self.W2 + self.b2
 
-def relu(X):
-    a = torch.zeros_like(X)
-    return torch.max(X, a)
+    def relu(self, X):
+        a = torch.zeros_like(X)
+        return torch.max(X, a)
 
-def net(X):
-    X = X.reshape((-1, num_inputs))
-    H = relu(X@W1 + b1)  # 这里“@”代表矩阵乘法
-    return (H@W2 + b2)
+# 创建 MLP 类的实例
+net = MLP(num_inputs, num_hiddens, num_outputs)
+
+# 3. 将模型参数移动到指定设备
+net = net.to(device)
 
 loss = nn.CrossEntropyLoss(reduction='none')
 
 num_epochs, lr = 10, 0.1
-updater = torch.optim.SGD(params, lr=lr)
-
-
+updater = torch.optim.SGD(net.parameters(), lr=lr)
 
 class Accumulator:
     """
@@ -49,7 +58,6 @@ class Accumulator:
     def __getitem__(self, idx):     # 获取所有数据
         return self.data[idx]
 
-
 def accuracy(y_hat, y):
     """
     计算正确的数量
@@ -61,7 +69,6 @@ def accuracy(y_hat, y):
         y_hat = y_hat.argmax(axis=1)            # 在每行中找到最大值的索引，以确定每个样本的预测类别
     cmp = y_hat.type(y.dtype) == y
     return float(cmp.type(y.dtype).sum())
-
 
 def evaluate_accuracy(net, data_iter):
     """
@@ -75,10 +82,10 @@ def evaluate_accuracy(net, data_iter):
     metric = Accumulator(2)
     with torch.no_grad():
         for X, y in data_iter:
+            # 4. 将数据移动到指定设备
+            X, y = X.to(device), y.to(device)
             metric.add(accuracy(net(X), y), y.numel())
     return metric[0] / metric[1]
-
-
 
 class Animator:
     """
@@ -100,7 +107,6 @@ class Animator:
             self.axes[0], xlabel, ylabel, xlim, ylim, xscale, yscale, legend
         )
         self.X, self.Y, self.fmts = None, None, fmts
-
 
     def add(self, x, y):
         """
@@ -129,7 +135,6 @@ class Animator:
         display.display(self.fig)
         display.clear_output(wait=True)
 
-
 def train_epoch_ch3(net, train_iter, loss, updater):
     """
     训练模型一轮
@@ -146,6 +151,8 @@ def train_epoch_ch3(net, train_iter, loss, updater):
     metric = Accumulator(3)
 
     for X, y in train_iter:  # 计算梯度并更新参数
+        # 4. 将数据移动到指定设备
+        X, y = X.to(device), y.to(device)
         y_hat = net(X)
         l = loss(y_hat, y)
         if isinstance(updater, torch.optim.Optimizer):  # 用于检查一个对象是否属于指定的类（或类的子类）或数据类型。
@@ -160,7 +167,6 @@ def train_epoch_ch3(net, train_iter, loss, updater):
         metric.add(float(l.sum()), accuracy(y_hat, y), y.numel())
     # 返回训练损失和训练精度
     return metric[0] / metric[2], metric[1] / metric[2]
-
 
 def train_ch3(net, train_iter, test_iter, loss, num_epochs, updater):
     """
@@ -182,7 +188,6 @@ def train_ch3(net, train_iter, test_iter, loss, num_epochs, updater):
         train_loss, train_acc = trans_metrics
         print(trans_metrics)
 
-
 def predict_ch3(net, test_iter, n=6):
     """
     进行预测
@@ -191,18 +196,17 @@ def predict_ch3(net, test_iter, n=6):
     :param n:
     :return:
     """
-    global X, y
     for X, y in test_iter:
+        # 4. 将数据移动到指定设备
+        X, y = X.to(device), y.to(device)
         break
-    trues = d2l.get_fashion_mnist_labels(y)
-    preds = d2l.get_fashion_mnist_labels(net(X).argmax(axis=1))
+    trues = d2l.get_fashion_mnist_labels(y.cpu())
+    preds = d2l.get_fashion_mnist_labels(net(X).argmax(axis=1).cpu())
     titles = [true + "\n" + pred for true, pred in zip(trues, preds)]
     d2l.show_images(
-        X[0:n].reshape((n, 28, 28)), 1, n, titles=titles[0:n]
+        X[0:n].cpu().reshape((n, 28, 28)), 1, n, titles=titles[0:n]
     )
     d2l.plt.show()
-
-
 
 train_ch3(net, train_iter, test_iter, loss, num_epochs, updater)
 
